@@ -114,3 +114,101 @@
 (define-private (calculate-platform-fee (amount uint))
     (/ (* amount (var-get platform-fee-percentage)) u10000)
 )
+
+;; Property creation and management
+(define-public (create-property
+        (title (string-utf8 128))
+        (location (string-utf8 256))
+        (property-value uint)
+        (total-tokens uint)
+        (monthly-rent uint)
+    )
+    (let ((property-id (+ (var-get total-properties) u1)))
+        (begin
+            (asserts! (not (var-get contract-paused)) err-invalid-parameter)
+            (asserts! (> property-value u0) err-invalid-parameter)
+            (asserts! (> total-tokens u0) err-invalid-parameter)
+            (asserts! (<= total-tokens u10000) err-invalid-parameter) ;; Max 10,000 tokens per property
+            (map-set properties property-id {
+                owner: tx-sender,
+                title: title,
+                location: location,
+                property-value: property-value,
+                total-tokens: total-tokens,
+                available-tokens: total-tokens,
+                monthly-rent: monthly-rent,
+                verified: false,
+                active: false,
+                created-at: stacks-block-height,
+            })
+            (map-set property-stats property-id {
+                total-holders: u0,
+                total-distributed: u0,
+                last-distribution: u0,
+                appreciation-rate: u0,
+            })
+            (var-set total-properties property-id)
+            (ok property-id)
+        )
+    )
+)
+
+(define-public (verify-property (property-id uint))
+    (let ((property (unwrap! (map-get? properties property-id) err-property-not-found)))
+        (begin
+            (asserts! (is-authorized-verifier tx-sender) err-not-authorized)
+            (asserts! (not (get verified property)) err-already-verified)
+            (map-set properties property-id
+                (merge property {
+                    verified: true,
+                    active: true,
+                })
+            )
+            (ok true)
+        )
+    )
+)
+
+(define-public (add-authorized-verifier (verifier principal))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set authorized-verifiers verifier true)
+        (ok true)
+    )
+)
+
+(define-public (remove-authorized-verifier (verifier principal))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (map-set authorized-verifiers verifier false)
+        (ok true)
+    )
+)
+
+;; Administrative functions
+(define-public (set-platform-fee (new-fee uint))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (asserts! (<= new-fee u1000) err-invalid-parameter) ;; Max 10%
+        (var-set platform-fee-percentage new-fee)
+        (ok true)
+    )
+)
+
+(define-public (toggle-contract-pause)
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (var-set contract-paused (not (var-get contract-paused)))
+        (ok true)
+    )
+)
+
+(define-public (withdraw-platform-fees)
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (let ((fees (var-get total-platform-fees)))
+            (var-set total-platform-fees u0)
+            (stx-transfer? fees tx-sender contract-owner)
+        )
+    )
+)
