@@ -64,3 +64,53 @@
         appreciation-rate: uint,
     }
 )
+
+;; Read-only functions
+(define-read-only (get-property-details (property-id uint))
+    (map-get? properties property-id)
+)
+
+(define-read-only (get-token-holdings
+        (property-id uint)
+        (holder principal)
+    )
+    (map-get? token-holdings {
+        property-id: property-id,
+        holder: holder,
+    })
+)
+
+(define-read-only (get-property-stats (property-id uint))
+    (map-get? property-stats property-id)
+)
+
+(define-read-only (get-total-properties)
+    (var-get total-properties)
+)
+
+(define-read-only (is-authorized-verifier (verifier principal))
+    (default-to false (map-get? authorized-verifiers verifier))
+)
+
+(define-read-only (calculate-ownership-percentage
+        (property-id uint)
+        (holder principal)
+    )
+    (let (
+            (property (unwrap! (map-get? properties property-id) (err u0)))
+            (holding (unwrap!
+                (map-get? token-holdings {
+                    property-id: property-id,
+                    holder: holder,
+                })
+                (err u0)
+            ))
+        )
+        (ok (/ (* (get tokens holding) u10000) (get total-tokens property)))
+    )
+)
+
+;; Private functions
+(define-private (calculate-platform-fee (amount uint))
+    (/ (* amount (var-get platform-fee-percentage)) u10000)
+)
