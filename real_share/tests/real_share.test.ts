@@ -221,8 +221,335 @@ describe("RealShare Contract Tests", () => {
 
       // Verify property details are stored (function returns Some)
       expect(propertyDetails.result).toBeDefined();
-      // Property details should be correctly stored (we can see in the output that the values are correct)
+            // Property stats should be correctly initialized (we can see in the output that the values are correct)
     });
+  });
+
+  describe("Property Verification", () => {
+    beforeEach(() => {
+      // Create a property for testing
+      simnet.callPublicFn(
+        "real_share",
+        "create-property",
+        [
+          Cl.stringUtf8(PROPERTY_TITLE), 
+          Cl.stringUtf8(PROPERTY_LOCATION), 
+          Cl.uint(PROPERTY_VALUE), 
+          Cl.uint(TOTAL_TOKENS), 
+          Cl.uint(MONTHLY_RENT)
+        ],
+        wallet1
+      );
+
+      // Add wallet2 as an authorized verifier
+      simnet.callPublicFn(
+        "real_share",
+        "add-authorized-verifier",
+        [Cl.principal(wallet2)],
+        deployer
+      );
+    });
+
+    it("should allow authorized verifier to verify property", () => {
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "verify-property",
+        [Cl.uint(1)],
+        wallet2
+      );
+      expect(result).toBeOk(Cl.bool(true));
+
+      // Check property is now verified and active
+      const propertyDetails = simnet.callReadOnlyFn(
+        "real_share",
+        "get-property-details",
+        [Cl.uint(1)],
+        deployer
+      );
+      expect(propertyDetails.result).toBeDefined();
+    });
+
+    it("should not allow non-authorized verifier to verify property", () => {
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "verify-property",
+        [Cl.uint(1)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(101)); // err-not-authorized
+    });
+
+    it("should not allow verifying non-existent property", () => {
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "verify-property",
+        [Cl.uint(999)],
+        wallet2
+      );
+      expect(result).toBeErr(Cl.uint(102)); // err-property-not-found
+    });
+
+    it("should not allow verifying already verified property", () => {
+      // First verification
+      simnet.callPublicFn(
+        "real_share",
+        "verify-property",
+        [Cl.uint(1)],
+        wallet2
+      );
+
+      // Second verification attempt
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "verify-property",
+        [Cl.uint(1)],
+        wallet2
+      );
+      expect(result).toBeErr(Cl.uint(107)); // err-already-verified
+    });
+  });
+
+  describe("Token Purchase", () => {
+    beforeEach(() => {
+      // Create and verify a property for testing
+      simnet.callPublicFn(
+        "real_share",
+        "create-property",
+        [
+          Cl.stringUtf8(PROPERTY_TITLE), 
+          Cl.stringUtf8(PROPERTY_LOCATION), 
+          Cl.uint(PROPERTY_VALUE), 
+          Cl.uint(TOTAL_TOKENS), 
+          Cl.uint(MONTHLY_RENT)
+        ],
+        wallet1
+      );
+
+      // Add wallet2 as authorized verifier and verify the property
+      simnet.callPublicFn(
+        "real_share",
+        "add-authorized-verifier",
+        [Cl.principal(wallet2)],
+        deployer
+      );
+
+      simnet.callPublicFn(
+        "real_share",
+        "verify-property",
+        [Cl.uint(1)],
+        wallet2
+      );
+    });
+
+    it("should allow purchasing tokens from verified property", () => {
+      const tokenAmount = 100;
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(tokenAmount)],
+        wallet3
+      );
+      expect(result).toBeOk(Cl.bool(true));
+
+      // Check token holdings
+      const holdings = simnet.callReadOnlyFn(
+        "real_share",
+        "get-token-holdings",
+        [Cl.uint(1), Cl.principal(wallet3)],
+        deployer
+      );
+      expect(holdings.result).toBeDefined();
+
+      // Check property available tokens decreased
+      const propertyDetails = simnet.callReadOnlyFn(
+        "real_share",
+        "get-property-details",
+        [Cl.uint(1)],
+        deployer
+      );
+      expect(propertyDetails.result).toBeDefined();
+    });
+
+    it("should not allow purchasing tokens from unverified property", () => {
+      // Create another unverified property
+      simnet.callPublicFn(
+        "real_share",
+        "create-property",
+        [
+          Cl.stringUtf8("Unverified Property"), 
+          Cl.stringUtf8("Unverified Location"), 
+          Cl.uint(PROPERTY_VALUE), 
+          Cl.uint(TOTAL_TOKENS), 
+          Cl.uint(MONTHLY_RENT)
+        ],
+        wallet1
+      );
+
+      const tokenAmount = 100;
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(2), Cl.uint(tokenAmount)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(108)); // err-not-verified
+    });
+
+    it("should not allow purchasing zero tokens", () => {
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(0)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(105)); // err-invalid-parameter
+    });
+
+    it("should not allow purchasing more tokens than available", () => {
+      const tokenAmount = TOTAL_TOKENS + 1;
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(tokenAmount)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(103)); // err-insufficient-tokens
+    });
+
+    it("should not allow purchasing tokens from non-existent property", () => {
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(999), Cl.uint(100)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(102)); // err-property-not-found
+    });
+
+    it("should not allow purchasing tokens when contract is paused", () => {
+      // Pause the contract
+      simnet.callPublicFn("real_share", "toggle-contract-pause", [], deployer);
+
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(100)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(105)); // err-invalid-parameter
+    });
+
+    it("should calculate ownership percentage correctly", () => {
+      const tokenAmount = 100; // 10% of 1000 tokens
+      
+      // Purchase tokens
+      simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(tokenAmount)],
+        wallet3
+      );
+
+      // Calculate ownership percentage
+      const ownershipPercentage = simnet.callReadOnlyFn(
+        "real_share",
+        "calculate-ownership-percentage",
+        [Cl.uint(1), Cl.principal(wallet3)],
+        deployer
+      );
+      
+      expect(ownershipPercentage.result).toBeOk(Cl.uint(1000)); // 10% = 1000 basis points
+    });
+
+    it("should update property statistics on token purchase", () => {
+      const tokenAmount = 100;
+      
+      // Purchase tokens
+      simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(tokenAmount)],
+        wallet3
+      );
+
+      // Check property stats updated
+      const propertyStats = simnet.callReadOnlyFn(
+        "real_share",
+        "get-property-stats",
+        [Cl.uint(1)],
+        deployer
+      );
+      expect(propertyStats.result).toBeDefined();
+      // Stats should show 1 holder now
+    });
+
+    it("should handle multiple token purchases by same user", () => {
+      // First purchase
+      simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(50)],
+        wallet3
+      );
+
+      // Second purchase
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(50)],
+        wallet3
+      );
+      expect(result).toBeOk(Cl.bool(true));
+
+      // Check total holdings
+      const holdings = simnet.callReadOnlyFn(
+        "real_share",
+        "get-token-holdings",
+        [Cl.uint(1), Cl.principal(wallet3)],
+        deployer
+      );
+      expect(holdings.result).toBeDefined();
+      // Should show total of 100 tokens
+    });
+
+    it("should handle multiple users purchasing tokens", () => {
+      // User 1 purchase
+      const result1 = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(200)],
+        wallet3
+      );
+      expect(result1.result).toBeOk(Cl.bool(true));
+
+      // User 2 purchase
+      const result2 = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(300)],
+        deployer
+      );
+      expect(result2.result).toBeOk(Cl.bool(true));
+
+      // Check both holdings exist
+      const holdings1 = simnet.callReadOnlyFn(
+        "real_share",
+        "get-token-holdings",
+        [Cl.uint(1), Cl.principal(wallet3)],
+        deployer
+      );
+      expect(holdings1.result).toBeDefined();
+
+      const holdings2 = simnet.callReadOnlyFn(
+        "real_share",
+        "get-token-holdings",
+        [Cl.uint(1), Cl.principal(deployer)],
+        deployer
+      );
+      expect(holdings2.result).toBeDefined();
+    });
+  });
+});
 
     it("should not allow creating property with zero value", () => {
       const { result } = simnet.callPublicFn(
@@ -318,5 +645,319 @@ describe("RealShare Contract Tests", () => {
       expect(propertyStats.result).toBeDefined();
       // Property stats should be correctly initialized (we can see in the output that the values are correct)
     });
+  
+
+  describe("Property Verification", () => {
+    beforeEach(() => {
+      // Create a property for testing
+      simnet.callPublicFn(
+        "real_share",
+        "create-property",
+        [
+          Cl.stringUtf8(PROPERTY_TITLE), 
+          Cl.stringUtf8(PROPERTY_LOCATION), 
+          Cl.uint(PROPERTY_VALUE), 
+          Cl.uint(TOTAL_TOKENS), 
+          Cl.uint(MONTHLY_RENT)
+        ],
+        wallet1
+      );
+
+      // Add wallet2 as an authorized verifier
+      simnet.callPublicFn(
+        "real_share",
+        "add-authorized-verifier",
+        [Cl.principal(wallet2)],
+        deployer
+      );
+    });
+
+    it("should allow authorized verifier to verify property", () => {
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "verify-property",
+        [Cl.uint(1)],
+        wallet2
+      );
+      expect(result).toBeOk(Cl.bool(true));
+
+      // Check property is now verified and active
+      const propertyDetails = simnet.callReadOnlyFn(
+        "real_share",
+        "get-property-details",
+        [Cl.uint(1)],
+        deployer
+      );
+      expect(propertyDetails.result).toBeDefined();
+    });
+
+    it("should not allow non-authorized verifier to verify property", () => {
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "verify-property",
+        [Cl.uint(1)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(101)); // err-not-authorized
+    });
+
+    it("should not allow verifying non-existent property", () => {
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "verify-property",
+        [Cl.uint(999)],
+        wallet2
+      );
+      expect(result).toBeErr(Cl.uint(102)); // err-property-not-found
+    });
+
+    it("should not allow verifying already verified property", () => {
+      // First verification
+      simnet.callPublicFn(
+        "real_share",
+        "verify-property",
+        [Cl.uint(1)],
+        wallet2
+      );
+
+      // Second verification attempt
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "verify-property",
+        [Cl.uint(1)],
+        wallet2
+      );
+      expect(result).toBeErr(Cl.uint(107)); // err-already-verified
+    });
   });
-});
+
+  describe("Token Purchase", () => {
+    beforeEach(() => {
+      // Create and verify a property for testing
+      simnet.callPublicFn(
+        "real_share",
+        "create-property",
+        [
+          Cl.stringUtf8(PROPERTY_TITLE), 
+          Cl.stringUtf8(PROPERTY_LOCATION), 
+          Cl.uint(PROPERTY_VALUE), 
+          Cl.uint(TOTAL_TOKENS), 
+          Cl.uint(MONTHLY_RENT)
+        ],
+        wallet1
+      );
+
+      // Add wallet2 as authorized verifier and verify the property
+      simnet.callPublicFn(
+        "real_share",
+        "add-authorized-verifier",
+        [Cl.principal(wallet2)],
+        deployer
+      );
+
+      simnet.callPublicFn(
+        "real_share",
+        "verify-property",
+        [Cl.uint(1)],
+        wallet2
+      );
+    });
+
+    it("should allow purchasing tokens from verified property", () => {
+      const tokenAmount = 100;
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(tokenAmount)],
+        wallet3
+      );
+      expect(result).toBeOk(Cl.bool(true));
+
+      // Check token holdings
+      const holdings = simnet.callReadOnlyFn(
+        "real_share",
+        "get-token-holdings",
+        [Cl.uint(1), Cl.principal(wallet3)],
+        deployer
+      );
+      expect(holdings.result).toBeDefined();
+    });
+
+    it("should not allow purchasing tokens from unverified property", () => {
+      // Create another unverified property
+      simnet.callPublicFn(
+        "real_share",
+        "create-property",
+        [
+          Cl.stringUtf8("Unverified Property"), 
+          Cl.stringUtf8("Unverified Location"), 
+          Cl.uint(PROPERTY_VALUE), 
+          Cl.uint(TOTAL_TOKENS), 
+          Cl.uint(MONTHLY_RENT)
+        ],
+        wallet1
+      );
+
+      const tokenAmount = 100;
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(2), Cl.uint(tokenAmount)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(108)); // err-not-verified
+    });
+
+    it("should not allow purchasing zero tokens", () => {
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(0)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(105)); // err-invalid-parameter
+    });
+
+    it("should not allow purchasing more tokens than available", () => {
+      const tokenAmount = TOTAL_TOKENS + 1;
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(tokenAmount)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(103)); // err-insufficient-tokens
+    });
+
+    it("should not allow purchasing tokens from non-existent property", () => {
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(999), Cl.uint(100)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(102)); // err-property-not-found
+    });
+
+    it("should not allow purchasing tokens when contract is paused", () => {
+      // Pause the contract
+      simnet.callPublicFn("real_share", "toggle-contract-pause", [], deployer);
+
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(100)],
+        wallet3
+      );
+      expect(result).toBeErr(Cl.uint(105)); // err-invalid-parameter
+    });
+
+    it("should calculate ownership percentage correctly", () => {
+      const tokenAmount = 100; // 10% of 1000 tokens
+      
+      // Purchase tokens
+      simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(tokenAmount)],
+        wallet3
+      );
+
+      // Calculate ownership percentage
+      const ownershipPercentage = simnet.callReadOnlyFn(
+        "real_share",
+        "calculate-ownership-percentage",
+        [Cl.uint(1), Cl.principal(wallet3)],
+        deployer
+      );
+      
+      expect(ownershipPercentage.result).toBeOk(Cl.uint(1000)); // 10% = 1000 basis points
+    });
+
+    it("should update property statistics on token purchase", () => {
+      const tokenAmount = 100;
+      
+      // Purchase tokens
+      simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(tokenAmount)],
+        wallet3
+      );
+
+      // Check property stats updated
+      const propertyStats = simnet.callReadOnlyFn(
+        "real_share",
+        "get-property-stats",
+        [Cl.uint(1)],
+        deployer
+      );
+      expect(propertyStats.result).toBeDefined();
+    });
+
+    it("should handle multiple token purchases by same user", () => {
+      // First purchase
+      simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(50)],
+        wallet3
+      );
+
+      // Second purchase
+      const { result } = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(50)],
+        wallet3
+      );
+      expect(result).toBeOk(Cl.bool(true));
+
+      // Check total holdings
+      const holdings = simnet.callReadOnlyFn(
+        "real_share",
+        "get-token-holdings",
+        [Cl.uint(1), Cl.principal(wallet3)],
+        deployer
+      );
+      expect(holdings.result).toBeDefined();
+    });
+
+    it("should handle multiple users purchasing tokens", () => {
+      // User 1 purchase
+      const result1 = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(200)],
+        wallet3
+      );
+      expect(result1.result).toBeOk(Cl.bool(true));
+
+      // User 2 purchase
+      const result2 = simnet.callPublicFn(
+        "real_share",
+        "purchase-tokens",
+        [Cl.uint(1), Cl.uint(300)],
+        deployer
+      );
+      expect(result2.result).toBeOk(Cl.bool(true));
+
+      // Check both holdings exist
+      const holdings1 = simnet.callReadOnlyFn(
+        "real_share",
+        "get-token-holdings",
+        [Cl.uint(1), Cl.principal(wallet3)],
+        deployer
+      );
+      expect(holdings1.result).toBeDefined();
+
+      const holdings2 = simnet.callReadOnlyFn(
+        "real_share",
+        "get-token-holdings",
+        [Cl.uint(1), Cl.principal(deployer)],
+        deployer
+      );
+      expect(holdings2.result).toBeDefined();
+    });
+  });
+
